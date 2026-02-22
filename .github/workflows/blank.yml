@@ -41,22 +41,24 @@ jobs:
         run: |
           head -n $LIMIT merged.txt > limited.txt
 
-      - name: Extract host:port
-        run: |
-          rm -f targets.txt
-          grep -oE '[a-zA-Z0-9\.-]+:[0-9]+' limited.txt | sort -u > targets.txt
-
-      - name: Parallel TCP Test
+      - name: Parallel TCP Test (Keep Full Config)
         run: |
           rm -f working.txt
           touch working.txt
-          cat targets.txt | xargs -I {} -P $CONCURRENCY bash -c '
-            host=$(echo {} | cut -d":" -f1)
-            port=$(echo {} | cut -d":" -f2)
-            timeout '"$TIMEOUT"' bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo {} >> working.txt
+
+          cat limited.txt | xargs -I {} -P $CONCURRENCY bash -c '
+            line="{}"
+            hp=$(echo "$line" | grep -oE "[a-zA-Z0-9\.-]+:[0-9]+" | head -n1)
+
+            if [ -n "$hp" ]; then
+              host=$(echo $hp | cut -d":" -f1)
+              port=$(echo $hp | cut -d":" -f2)
+
+              timeout '"$TIMEOUT"' bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo "$line" >> working.txt
+            fi
           ' || true
 
-      - name: Save Unique Results
+      - name: Remove Duplicates
         run: |
           sort -u working.txt -o working.txt
 
@@ -65,5 +67,5 @@ jobs:
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
           git add working.txt
-          git commit -m "update" || echo "No changes"
+          git commit -m "update working configs" || echo "No changes"
           git push || true

@@ -1,9 +1,12 @@
-name: Multi Worker TCP Checker
+name: Ultimate TCP Checker
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 */3 * * *"
+
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -17,12 +20,13 @@ jobs:
           source config.env
           echo "LIMIT=$LIMIT" >> $GITHUB_ENV
           echo "TIMEOUT=$TIMEOUT" >> $GITHUB_ENV
+          echo "CONCURRENCY=$CONCURRENCY" >> $GITHUB_ENV
           echo "$SUB_URLS" > workers.txt
 
-      - name: Install curl
+      - name: Install tools
         run: sudo apt update && sudo apt install -y curl
 
-      - name: Download All Workers
+      - name: Download & Merge
         run: |
           rm -f merged.txt
           touch merged.txt
@@ -33,27 +37,33 @@ jobs:
             echo "" >> merged.txt
           done < workers.txt
 
-      - name: Limit & Prepare
+      - name: Limit
         run: |
-          head -n $LIMIT merged.txt > decoded.txt
+          head -n $LIMIT merged.txt > limited.txt
 
-      - name: TCP Test
+      - name: Extract host:port
+        run: |
+          rm -f targets.txt
+          grep -oE '[a-zA-Z0-9\.-]+:[0-9]+' limited.txt | sort -u > targets.txt
+
+      - name: Parallel TCP Test
         run: |
           rm -f working.txt
           touch working.txt
-          while read line; do
-            host=$(echo "$line" | grep -oE '[a-zA-Z0-9\.-]+:[0-9]+' | head -n1 | cut -d':' -f1)
-            port=$(echo "$line" | grep -oE '[a-zA-Z0-9\.-]+:[0-9]+' | head -n1 | cut -d':' -f2)
+          cat targets.txt | xargs -I {} -P $CONCURRENCY bash -c '
+            host=$(echo {} | cut -d":" -f1)
+            port=$(echo {} | cut -d":" -f2)
+            timeout '"$TIMEOUT"' bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo {} >> working.txt
+          ' || true
 
-            if [ -n "$host" ] && [ -n "$port" ]; then
-              timeout $TIMEOUT bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo "$line" >> working.txt
-            fi
-          done < decoded.txt || true
+      - name: Save Unique Results
+        run: |
+          sort -u working.txt -o working.txt
 
-      - name: Commit Result
+      - name: Commit
         run: |
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
           git add working.txt
-          git diff --cached --quiet || git commit -m "update"
+          git commit -m "update" || echo "No changes"
           git push || true

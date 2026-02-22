@@ -1,51 +1,44 @@
-name: Proxy TCP Check
+name: TCP Checker
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch:
 
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install tools
+      - name: Install curl
         run: sudo apt update && sudo apt install -y curl
 
-      - name: Merge subscriptions
+      - name: Download Subs
         run: |
-          rm -f merged.txt
+          rm -f all.txt
           while read line; do
-            curl -s "$line" >> merged.txt
-            echo "" >> merged.txt
+            curl -s "$line" >> all.txt
+            echo "" >> all.txt
           done < sources.txt
 
       - name: Decode
-        run: base64 -d merged.txt > decoded.txt || cp merged.txt decoded.txt
+        run: base64 -d all.txt > decoded.txt || cp all.txt decoded.txt
 
       - name: TCP Test
         run: |
           rm -f working.txt
           touch working.txt
           while read line; do
-            host=$(echo "$line" | grep -oE '[0-9a-zA-Z\.-]+:[0-9]+' | head -n1 | cut -d':' -f1)
-            port=$(echo "$line" | grep -oE '[0-9a-zA-Z\.-]+:[0-9]+' | head -n1 | cut -d':' -f2)
-
-            if [ ! -z "$host" ] && [ ! -z "$port" ]; then
-              timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null
-              if [ $? -eq 0 ]; then
-                echo "$line" >> working.txt
-              fi
-            fi
+            host=$(echo "$line" | grep -oE '[^:/]+:[0-9]+' | head -n1 | cut -d':' -f1)
+            port=$(echo "$line" | grep -oE '[^:/]+:[0-9]+' | head -n1 | cut -d':' -f2)
+            timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo "$line" >> working.txt
           done < decoded.txt
 
-      - name: Commit result
+      - name: Push Result
         run: |
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
           git add working.txt
-          git commit -m "update working list" || echo "No changes"
+          git commit -m "update" || echo "no change"
           git push

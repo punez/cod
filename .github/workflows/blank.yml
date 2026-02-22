@@ -1,9 +1,9 @@
-name: TCP Checker
+name: Multi Worker TCP Checker
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 */3 * * *"
 
 jobs:
   test:
@@ -12,28 +12,32 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Load Config
+        run: |
+          source config.env
+          echo "LIMIT=$LIMIT" >> $GITHUB_ENV
+          echo "TIMEOUT=$TIMEOUT" >> $GITHUB_ENV
+          echo "$SUB_URLS" > workers.txt
+
       - name: Install curl
         run: sudo apt update && sudo apt install -y curl
 
-      - name: Download Subs
+      - name: Download All Workers
         run: |
-          rm -f all.txt
-          touch all.txt
-          while read line; do
-            [ -z "$line" ] && continue
-            curl -L --connect-timeout 10 --max-time 20 -s "$line" >> all.txt || echo "skip $line"
-            echo "" >> all.txt
-          done < sources.txt
+          rm -f merged.txt
+          touch merged.txt
+          while read url; do
+            [ -z "$url" ] && continue
+            echo "Downloading $url"
+            curl -L -s "$url" >> merged.txt
+            echo "" >> merged.txt
+          done < workers.txt
 
-      - name: Decode Safe
+      - name: Limit & Prepare
         run: |
-          if base64 -d all.txt > decoded.txt 2>/dev/null; then
-            echo "decoded"
-          else
-            cp all.txt decoded.txt
-          fi
+          head -n $LIMIT merged.txt > decoded.txt
 
-      - name: TCP Test Safe
+      - name: TCP Test
         run: |
           rm -f working.txt
           touch working.txt
@@ -42,10 +46,7 @@ jobs:
             port=$(echo "$line" | grep -oE '[a-zA-Z0-9\.-]+:[0-9]+' | head -n1 | cut -d':' -f2)
 
             if [ -n "$host" ] && [ -n "$port" ]; then
-              timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null || true
-              if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null; then
-                echo "$line" >> working.txt
-              fi
+              timeout $TIMEOUT bash -c "cat < /dev/null > /dev/tcp/$host/$port" 2>/dev/null && echo "$line" >> working.txt
             fi
           done < decoded.txt || true
 
